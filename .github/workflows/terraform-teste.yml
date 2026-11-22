@@ -38,7 +38,7 @@ jobs:
     # onde estao os arquivos .tf
     defaults:
       run:
-        workinf-directory: terraform
+        working-directory: terraform
 
     # Passos executados em ordem. Se um falhar, a pipeline para
     steps:

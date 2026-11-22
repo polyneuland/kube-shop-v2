@@ -1,0 +1,72 @@
+
+# Pipeline minima de teste: valida a autenticacao na AWS, o
+# acesso ao bucket do state e o lock, sem criar nenhum recurso
+name: Terraform (teste)
+
+# Trigger: execucao manual pela aba Actions ("Run workflow"),
+# com o parametro environment escolhido numa lista
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Ambiente de destino
+        type: choice
+        options:
+          - dev
+          - homolog
+          - prod
+        default: dev
+
+jobs:
+  terraform:
+    # Maquina temporaria (runner) emprestada pelo GitHub
+    # Ela eh apagada ao final, por isso o state fica no S3
+    runs-on: ubuntu-latest
+
+    # Variaveis disponiveis para todos os passos do job
+    env:
+      # Credenciais da AWS, lidas dos GitHub Secrets
+      # O provider da AWS reconhece esses nomes automaticamente
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      # O prefixo TF_VAR_ faz o Terraform receber este valor como
+      # var.environment. Vem do parametro escolhido na tela
+      TF_VAR_environment: ${{ inputs.environment }}
+
+    # Todos os comandos "run" rodam dentro da pasta terraform,
+    # onde estao os arquivos .tf
+    defaults:
+      run:
+        workinf-directory: terraform
+
+    # Passos executados em ordem. Se um falhar, a pipeline para
+    steps:
+      - name: Baixar o código do repositório para o runner
+        uses: actions/checkout@v4
+
+      - name: Instalar o Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          # Versao mais recente da serie 1.13 (atende ao >= 1.10)
+          terraform_version: "~1.13.0"
+
+      # So confere a formatacao, sem alterar nada.
+      # Falha se algum arquivo nao estiver formatado
+      - name: Conferir a formatação
+        run: terraform fmt -check
+
+      # Conecta ao bucket do state. O bucket e o caminho (key) sao
+      # informados aqui porque o backend nao aceita variaveis.
+      # Cada ambiente tem seu proprio arquivo de state
+      - name: Inicializar e conectar ao bucket do state
+        run: > 
+          terraform init
+          -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
+          -backend-config="key=kubeshop/${{ inputs.environment }}/terraform.tfstate"
+
+      - name: Validar a sintaxe do código
+        run: terraform validate
+
+      - name: Mostrar o que seria criado ou alterado
+        run: terraform plan

@@ -13,11 +13,11 @@ variable "environment" {
 
   # Se ninguem escolher, usa dev: o mais seguro para erros
   default = "dev"
-}
 
-# Confere o valor ANTES de criar qualquer recurso. Se nao for
-# um dos tres ambientes, a execucao para com a mensagem abaixo
-validation {
-  condition     = contains(["dev", "homolog", "prod"], var.environment)
-  error_message = "O environment deve ser dev, homolog ou prod."
+  # Confere o valor ANTES de criar qualquer recurso. Se nao for
+  # um dos tres ambientes, a execucao para com a mensagem abaixo
+  validation {
+    condition     = contains(["dev", "homolog", "prod"], var.environment)
+    error_message = "O environment deve ser dev, homolog ou prod."
+  }
 }

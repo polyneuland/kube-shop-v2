@@ -9,3 +9,9 @@ coverage/
 test-results/
 playwright-report/
 *.log
+
+# Terraform: arquivos gerados localmente que não devem ir para o GitHub
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars

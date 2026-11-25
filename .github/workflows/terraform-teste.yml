@@ -1,10 +1,10 @@
 
-# Pipeline minima de teste: valida a autenticacao na AWS, o
-# acesso ao bucket do state e o lock, sem criar nenhum recurso
-name: Terraform (teste)
+# Pipeline do Terraform: planeja, cria/atualiza ou destrói a
+# infraestrutura na AWS, conforme o ambiente e a operação escolhidos
+name: Terraform
 
-# Trigger: execucao manual pela aba Actions ("Run workflow"),
-# com o parametro environment escolhido numa lista
+# Trigger: execução manual pela aba Actions ("Run workflow"),
+# com o ambiente e a operação escolhidos em listas
 on:
   workflow_dispatch:
     inputs:
@@ -16,6 +16,17 @@ on:
           - homolog
           - prod
         default: dev
+
+      # Operação: plan )só mostra), apply (cria ou atualiza)
+      # ou destroy (apaga tudo que o Terraform criou)
+      action:
+        description: O que a pipeline deve fazer com a infraestrutura
+        type: choice
+        options:
+          - plan
+          - apply 
+          - destroy
+        default: plan
 
 jobs:
   terraform:
@@ -68,5 +79,20 @@ jobs:
       - name: Validar a sintaxe do código
         run: terraform validate
 
-      - name: Mostrar o que seria criado ou alterado
-        run: terraform plan
+      # Plano normal (plan e apply): mostra o que será criado ou
+      # alterado e salva no arquivo tfplan
+      - name: Gerar e salvar o plano
+        if: inputs.action != 'destroy'
+        run: terraform plan -out=tfplan
+
+      # Plano de destruição (destroy): mostra o que será apagado
+      # e salva no arquivo tfplan
+      - name: Gerar e salvar o plano de destruição
+        if: inputs.action == 'destroy'
+        run: terraform plan -destroy -out=tfplan
+
+      # Executa exatamente o plano salvo. Não roda quando a operação
+      # é plan. Aplicar um plano salvo não pede confirmação.
+      - name: Aplicação do plano
+        if: inputs.action != 'plan'
+        run: terraform apply tfplan

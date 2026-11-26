@@ -21,3 +21,10 @@ variable "environment" {
     error_message = "O environment deve ser dev, homolog ou prod."
   }
 }
+
+# Chave SSH pública, instalada nas VMs. Vem da Variable
+# SSH_PUBLIC_KEY do GitHub. Sem default: é obrigatória
+variable "ssh_public_key" {
+  description = "Chave SSH pública"
+  type        = string
+}

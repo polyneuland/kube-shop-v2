@@ -17,7 +17,7 @@ on:
           - prod
         default: dev
 
-      # Operação: plan )só mostra), apply (cria ou atualiza)
+      # Operação: plan (só mostra), apply (cria ou atualiza)
       # ou destroy (apaga tudo que o Terraform criou)
       action:
         description: O que a pipeline deve fazer com a infraestrutura
@@ -44,6 +44,9 @@ jobs:
       # O prefixo TF_VAR_ faz o Terraform receber este valor como
       # var.environment. Vem do parametro escolhido na tela
       TF_VAR_environment: ${{ inputs.environment }}
+
+      # Chave SSH pública, vinda da Variable do GitHub
+      TF_VAR_ssh_public_key: ${{ vars.SSH_PUBLIC_KEY }}
 
     # Todos os comandos "run" rodam dentro da pasta terraform,
     # onde estao os arquivos .tf

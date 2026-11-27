@@ -65,6 +65,10 @@ jobs:
           # Versao mais recente da serie 1.13 (atende ao >= 1.10)
           terraform_version: "~1.13.0"
 
+          # Desliga o "embrulho" da action, que misturaria textos
+          # extras ao capturar os outputs para o inventário do Ansible
+          terraform_wrapper: false
+
       # So confere a formatacao, sem alterar nada.
       # Falha se algum arquivo nao estiver formatado
       - name: Conferir a formatação
@@ -99,3 +103,52 @@ jobs:
       - name: Aplicação do plano
         if: inputs.action != 'plan'
         run: terraform apply tfplan
+
+      # Escreve a chave privada (do GitHub Secrets) num arquivo e
+      # configura o SSH para usá-la ao entrar nas VMs
+      - name: Preparar a chave SSH
+        if: inputs.action == 'apply'
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/pm04
+          chmod 600 ~/.ssh/pm04
+          cat > ~/.ssh/config <<'EOF'
+          Host *
+            User ubuntu
+            IdentityFile ~/.ssh/pm04
+            StrictHostKeyChecking no
+            UserKnownHostsFile /dev/null
+          EOF
+
+      # Monta o inventário do Ansible com os IPs dos outputs do
+      # Terraform. Os IPs mudam a cada criação, por isso é gerado aqui
+      - name: Gerar o inventário do Ansible
+        if: inputs.action == 'apply'
+        run: |
+          APP_IP=$(terraform output -raw vm_app_public_ip)
+          BANCO_IP=$(terraform output -raw vm_banco_private_ip)
+          cat > ../ansible/inventory.ini <<EOF
+          [app]
+          vm_app ansible_host=${APP_IP} ansible_user=ubuntu
+
+          [banco]
+          vm_banco ansible_host=${BANCO_IP} ansible_user=ubuntu ansible_ssh_common_args='-o ProxyJump=ubuntu@${APP_IP}'
+          EOF
+          cat ../ansible/inventory.ini
+
+      # Instala o Ansible na máquina da pipeline
+      - name: Instalar o Ansible
+        if: inputs.action == 'apply'
+        run: |
+          pipx install --include-deps ansible
+          ansible --version
+
+      # Roda o playbook nas VMs, usando o inventário gerado acima
+      - name: Executar o Ansible
+        if: inputs.action == 'apply'
+        working-directory: ansible
+        env:
+          ANSIBLE_FORCE_COLOR: "true"
+        run: ansible-playbook -i inventory.ini playbook.yml

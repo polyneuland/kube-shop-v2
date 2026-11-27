@@ -15,3 +15,6 @@ playwright-report/
 *.tfstate
 *.tfstate.backup
 *.tfvars
+
+# Ansible: inventário gerado pela pipeline (IPs mudam a cada criação)
+ansible/inventory.ini

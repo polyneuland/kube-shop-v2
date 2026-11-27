@@ -28,3 +28,18 @@ variable "ssh_public_key" {
   description = "Chave SSH pública"
   type        = string
 }
+
+# Tamanho das VMS. Corresponde ao parâmetro instance_type
+# da pipeline e é a alteração de infraestrutura do Cenário 2
+variable "instance_type" {
+  description = "Tipo da instancia da VM"
+  type        = string
+  default     = "t3.micro"
+
+  # Só permite os tamanhos usados no projeto, para proteger
+  # os créditos e barrar erros de digitação antes do apply
+  validation {
+    condition     = contains(["t3.micro", "t3.small"], var.instance_type)
+    error_message = "A instancia deve ser t3.micro ou t3.small."
+  }
+}

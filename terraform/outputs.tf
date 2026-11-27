@@ -7,3 +7,10 @@ output "vm_banco_private_ip" {
   description = "IP privado da VM banco"
   value       = aws_instance.vm_banco.private_ip
 }
+
+# ID do disco de dados. O Ansible usa para encontrar o disco
+# dentro da VM banco e formatá-lo
+output "ebs_banco_id" {
+  description = "ID do disco de dados do MongoDB"
+  value       = aws_ebs_volume.ebs_banco.id
+}

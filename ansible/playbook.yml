@@ -1,15 +1,18 @@
-# Playbook mínimo: testa se o Ansible consegue entrar nas duas VMs
-- name: Testar o acesso do Ansible nas VMs
+# Prepara as duas VMs: espera ficarem acessíveis, atualiza o
+# sistema, instala os pacotes e o Docker.
+- name: Preparar as VMs
   hosts: all
+  # Executa as tarefas como administrador (sudo)
+  become: true
   # Não coleta informações antes de esperar a VM ligar
   gather_facts: false
-  tasks:
-    # As VMs acabaram de ser criadas: espera o SSH responder
-    # (até 5 minutos) antes de qualquer tarefa
+
+  # pre_tasks rodam antes das roles
+  pre_tasks:
     - name: Esperar a VM aceitar conexões SSH
       wait_for_connection:
         timeout: 300
 
-    # Entra na VM e confere se o Ansible consegue trabalhar nela
-    - name: Conferir se entra com o SSH
-      ping:
+  roles:
+    - os_updates
+    - docker

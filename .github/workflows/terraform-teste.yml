@@ -1,10 +1,10 @@
-
-# Pipeline do Terraform: planeja, cria/atualiza ou destrói a
-# infraestrutura na AWS, conforme o ambiente e a operação escolhidos
+# Pipeline do Terraform e do Ansible: planeja, cria/atualiza ou
+# destrói a infraestrutura na AWS e configura as VMs, conforme os
+# parâmetros escolhidos
 name: Terraform
 
 # Trigger: execução manual pela aba Actions ("Run workflow"),
-# com o ambiente e a operação escolhidos em listas
+# com os parâmetros escolhidos na tela
 on:
   workflow_dispatch:
     inputs:
@@ -24,32 +24,55 @@ on:
         type: choice
         options:
           - plan
-          - apply 
+          - apply
           - destroy
         default: plan
 
+      # Tamanho das VMs (alteração de infraestrutura do Cenário 2)
+      instance_type:
+        description: Tamanho das VMs
+        type: choice
+        options:
+          - t3.micro
+          - t3.small
+        default: t3.micro
+
+      # Aplicar atualizações do sistema operacional
+      update_os:
+        description: Aplicar atualizações do sistema operacional
+        type: boolean
+        default: false
+
+      # Pacotes extras, separados por vírgula (ex.: htop, git)
+      extra_packages:
+        description: "Pacotes extras separados por vírgula (ex.: htop, git)"
+        type: string
+        default: ""
+
 jobs:
   terraform:
-    # Maquina temporaria (runner) emprestada pelo GitHub
-    # Ela eh apagada ao final, por isso o state fica no S3
+    # Máquina temporária (runner) emprestada pelo GitHub.
+    # Ela é apagada ao final, por isso o state fica no S3
     runs-on: ubuntu-latest
 
-    # Variaveis disponiveis para todos os passos do job
+    # Variáveis disponíveis para todos os passos do job
     env:
-      # Credenciais da AWS, lidas dos GitHub Secrets
+      # Credenciais da AWS, lidas dos GitHub Secrets.
       # O provider da AWS reconhece esses nomes automaticamente
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
-      # O prefixo TF_VAR_ faz o Terraform receber este valor como
-      # var.environment. Vem do parametro escolhido na tela
+      # O prefixo TF_VAR_ faz o Terraform receber estes valores
+      # como variáveis (var.environment, var.ssh_public_key...)
       TF_VAR_environment: ${{ inputs.environment }}
 
       # Chave SSH pública, vinda da Variable do GitHub
       TF_VAR_ssh_public_key: ${{ vars.SSH_PUBLIC_KEY }}
 
-    # Todos os comandos "run" rodam dentro da pasta terraform,
-    # onde estao os arquivos .tf
+      # Tamanho das VMs, vindo do parâmetro escolhido na tela
+      TF_VAR_instance_type: ${{ inputs.instance_type }}
+
+    # Por padrão, os comandos "run" rodam na pasta terraform
     defaults:
       run:
         working-directory: terraform
@@ -62,23 +85,23 @@ jobs:
       - name: Instalar o Terraform
         uses: hashicorp/setup-terraform@v4
         with:
-          # Versao mais recente da serie 1.13 (atende ao >= 1.10)
+          # Versão mais recente da série 1.13 (atende ao >= 1.10)
           terraform_version: "~1.13.0"
 
           # Desliga o "embrulho" da action, que misturaria textos
           # extras ao capturar os outputs para o inventário do Ansible
           terraform_wrapper: false
 
-      # So confere a formatacao, sem alterar nada.
-      # Falha se algum arquivo nao estiver formatado
+      # Só confere a formatação, sem alterar nada.
+      # Falha se algum arquivo não estiver formatado
       - name: Conferir a formatação
         run: terraform fmt -check
 
-      # Conecta ao bucket do state. O bucket e o caminho (key) sao
-      # informados aqui porque o backend nao aceita variaveis.
-      # Cada ambiente tem seu proprio arquivo de state
+      # Conecta ao bucket do state. O bucket e o caminho (key) são
+      # informados aqui porque o backend não aceita variáveis.
+      # Cada ambiente tem seu próprio arquivo de state
       - name: Inicializar e conectar ao bucket do state
-        run: > 
+        run: >
           terraform init
           -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
           -backend-config="key=kubeshop/${{ inputs.environment }}/terraform.tfstate"
@@ -99,7 +122,7 @@ jobs:
         run: terraform plan -destroy -out=tfplan
 
       # Executa exatamente o plano salvo. Não roda quando a operação
-      # é plan. Aplicar um plano salvo não pede confirmação.
+      # é plan. Aplicar um plano salvo não pede confirmação
       - name: Aplicação do plano
         if: inputs.action != 'plan'
         run: terraform apply tfplan
@@ -131,10 +154,10 @@ jobs:
           BANCO_IP=$(terraform output -raw vm_banco_private_ip)
           cat > ../ansible/inventory.ini <<EOF
           [app]
-          vm_app ansible_host=${APP_IP} ansible_user=ubuntu
+          vm_app ansible_host=${APP_IP} ansible_user=ubuntu ansible_python_interpreter=/usr/bin/python3
 
           [banco]
-          vm_banco ansible_host=${BANCO_IP} ansible_user=ubuntu ansible_ssh_common_args='-o ProxyJump=ubuntu@${APP_IP}'
+          vm_banco ansible_host=${BANCO_IP} ansible_user=ubuntu ansible_python_interpreter=/usr/bin/python3 ansible_ssh_common_args='-o ProxyJump=ubuntu@${APP_IP}'
           EOF
           cat ../ansible/inventory.ini
 
@@ -145,10 +168,17 @@ jobs:
           pipx install --include-deps ansible
           ansible --version
 
-      # Roda o playbook nas VMs, usando o inventário gerado acima
+      # Roda o playbook nas VMs, passando os parâmetros da pipeline.
+      # Os valores vão por variáveis de ambiente, e não direto no
+      # comando, para evitar que um texto digitado vire comando
       - name: Executar o Ansible
         if: inputs.action == 'apply'
         working-directory: ansible
         env:
           ANSIBLE_FORCE_COLOR: "true"
-        run: ansible-playbook -i inventory.ini playbook.yml
+          UPDATE_OS: ${{ inputs.update_os }}
+          EXTRA_PACKAGES: ${{ inputs.extra_packages }}
+        run: >
+          ansible-playbook -i inventory.ini playbook.yml
+          -e "update_os=$UPDATE_OS"
+          -e "extra_packages=$EXTRA_PACKAGES"

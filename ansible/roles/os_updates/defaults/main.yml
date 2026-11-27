@@ -1,0 +1,4 @@
+# Valores padrão: sem atualização do SO e sem pacotes extras.
+# A pipeline sobrescreve com os parâmetros update_os e extra_packages.
+update_os: false
+extra_packages: ""

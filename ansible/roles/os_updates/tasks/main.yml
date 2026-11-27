@@ -1,0 +1,31 @@
+# Atualiza a lista de pacotes disponíveis (apt update).
+# É só uma consulta aos repositórios, não altera o sistema,
+# por isso não é contada como mudança (changed_when: false).
+- name: Atualizar a lista de pacotes
+  apt:
+    update_cache: true
+    cache_valid_time: 3600
+  changed_when: false
+
+# Aplica as atualizações do sistema somente quando o parâmetro
+# update_os da pipeline for true.
+- name: Aplicar atualizações do sistema operacional
+  apt:
+    upgrade: safe
+  when: update_os | bool
+
+# Pacotes básicos que todo servidor do projeto precisa.
+- name: Instalar pacotes básicos
+  apt:
+    name:
+      - ca-certificates
+      - curl
+    state: present
+
+# Pacotes extras pedidos no parâmetro extra_packages, separados
+# por vírgula. Converte o texto "curl, git" na lista [curl, git].
+- name: Instalar pacotes extras
+  apt:
+    name: "{{ extra_packages.split(',') | map('trim') | reject('equalto', '') | list }}"
+    state: present
+  when: extra_packages | length > 0

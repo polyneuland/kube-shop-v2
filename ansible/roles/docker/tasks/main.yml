@@ -1,0 +1,23 @@
+# Instala o Docker, o plugin do Compose e a biblioteca Python que
+# o Ansible usa para gerenciar contêineres.
+- name: Instalar o Docker
+  apt:
+    name:
+      - docker.io
+      - docker-compose-v2
+      - python3-docker
+    state: present
+
+# Garante que o Docker esteja rodando e ligue junto com a VM.
+- name: Garantir que o Docker esteja em execução
+  service:
+    name: docker
+    state: started
+    enabled: true
+
+# Permite ao usuário ubuntu usar o Docker sem sudo.
+- name: Adicionar o usuário ubuntu ao grupo docker
+  user:
+    name: ubuntu
+    groups: docker
+    append: true

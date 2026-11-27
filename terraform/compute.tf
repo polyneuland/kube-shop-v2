@@ -56,3 +56,20 @@ resource "aws_instance" "vm_banco" {
     Name = "kubeshop-${var.environment}-instance-banco"
   }
 }
+
+resource "aws_ebs_volume" "ebs_banco" {
+  availability_zone = aws_instance.vm_banco.availability_zone
+  size              = 10
+  type              = "gp3"
+  encrypted         = true
+
+  tags = {
+    Name = "kubeshop-${var.environment}-ebs-banco"
+  }
+}
+
+resource "aws_volume_attachment" "banco_attachment" {
+  device_name = "/dev/sdf"
+  volume_id   = aws_ebs_volume.ebs_banco.id
+  instance_id = aws_instance.vm_banco.id
+}

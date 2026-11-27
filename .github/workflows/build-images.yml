@@ -1,0 +1,56 @@
+# Pipeline de build (CI da aplicação): constrói as imagens do
+# frontend e da API a partir dos Dockerfiles do projeto e publica
+# no GitHub Container Registry (GHCR) com a versão informada
+name: Build das imagens
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Versão das imagens (ex.: 1.0.0)"
+        type: string
+        required: true
+        default: "1.0.0"
+
+# Permissões do GITHUB_TOKEN: ler o código e publicar pacotes
+# (imagens) no GHCR. Nada além disso (menor privilégio)
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    env:
+      VERSION: ${{ inputs.version }}
+      OWNER: ${{ github.repository_owner }}
+
+    steps:
+      - name: Baixar o código do repositório para o runner
+        uses: actions/checkout@v7
+
+      # Aceita só versões no formato X.Y.Z (ex.: 1.0.0), para ter
+      # tags explícitas e reproduzíveis, como recomenda o PM-04
+      - name: Validar o formato da versão
+        run: |
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Versão inválida: use o formato X.Y.Z (ex.: 1.0.0)"
+            exit 1
+          fi
+
+      # Entra no GHCR com a credencial temporária do GitHub
+      - name: Entrar no GitHub Container Registry
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GITHUB_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Construir e publicar a imagem do frontend
+        run: |
+          docker build -f apps/frontend/Dockerfile -t "ghcr.io/${OWNER}/kubeshop-frontend:${VERSION}" .
+          docker push "ghcr.io/${OWNER}/kubeshop-frontend:${VERSION}"
+
+      - name: Construir e publicar a imagem da API
+        run: |
+          docker build -f apps/backend/Dockerfile -t "ghcr.io/${OWNER}/kubeshop-api:${VERSION}" .
+          docker push "ghcr.io/${OWNER}/kubeshop-api:${VERSION}"

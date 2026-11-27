@@ -1,0 +1,71 @@
+# As senhas vêm dos GitHub Secrets, por variáveis de ambiente da
+# pipeline. Para a execução se alguma estiver vazia
+- name: Conferir se as senhas do MongoDB foram informadas
+  assert:
+    that:
+      - lookup('env', 'MONGO_ROOT_PASSWORD') | length > 0
+      - lookup('env', 'MONGO_APP_PASSWORD') | length > 0
+    fail_msg: "Os Secrets MONGO_ROOT_PASSWORD e MONGO_APP_PASSWORD são obrigatórios."
+  no_log: true
+
+- name: Criar a pasta de configuração do MongoDB
+  file:
+    path: /opt/kubeshop/mongo
+    state: directory
+    mode: "0755"
+
+# Grava as senhas em arquivos legíveis só pelo usuário do MongoDB
+# (UID 999). O no_log impede que as senhas apareçam no log
+- name: Gravar as senhas do MongoDB
+  copy:
+    content: "{{ item.value }}"
+    dest: "/opt/kubeshop/mongo/{{ item.name }}"
+    owner: "999"
+    group: "999"
+    mode: "0400"
+  loop:
+    - { name: mongo_root_password, value: "{{ lookup('env', 'MONGO_ROOT_PASSWORD') }}" }
+    - { name: mongo_app_password, value: "{{ lookup('env', 'MONGO_APP_PASSWORD') }}" }
+  no_log: true
+
+# Copia os scripts do próprio repositório para a VM
+- name: Copiar os scripts do MongoDB
+  copy:
+    src: "{{ playbook_dir }}/../docker/mongodb/{{ item }}"
+    dest: "/opt/kubeshop/mongo/{{ item }}"
+    mode: "0444"
+  loop:
+    - init.js
+    - healthcheck.js
+
+# Sobe o MongoDB com a mesma configuração do compose.yaml.
+# Os dados ficam no disco separado (/data/mongo).
+# A porta 27017 fica presa ao IP privado da VM
+- name: Executar o contêiner do MongoDB
+  community.docker.docker_container:
+    name: mongodb
+    image: mongo:8.0.17
+    command: ["--bind_ip_all", "--wiredTigerCacheSizeGB", "0.25"]
+    restart_policy: unless-stopped
+    ports:
+      - "{{ ansible_host }}:27017:27017"
+    env:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD_FILE: /run/secrets/mongo_root_password
+      MONGO_INITDB_DATABASE: kubeshop
+      MONGO_APP_USERNAME: kubeshop
+      MONGO_APP_PASSWORD_FILE: /run/secrets/mongo_app_password
+    volumes:
+      - /data/mongo/db:/data/db
+      - /data/mongo/configdb:/data/configdb
+      - /opt/kubeshop/mongo/mongo_root_password:/run/secrets/mongo_root_password:ro
+      - /opt/kubeshop/mongo/mongo_app_password:/run/secrets/mongo_app_password:ro
+      - /opt/kubeshop/mongo/init.js:/docker-entrypoint-initdb.d/10-app-user.js:ro
+      - /opt/kubeshop/mongo/healthcheck.js:/opt/healthcheck.js:ro
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--file", "/opt/healthcheck.js"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    state: started

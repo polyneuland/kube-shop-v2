@@ -1,18 +1,29 @@
-# Prepara as duas VMs: espera ficarem acessíveis, atualiza o
-# sistema, instala os pacotes e o Docker.
+# Play 1: prepara as duas VMs (sistema, pacotes e Docker)
 - name: Preparar as VMs
   hosts: all
-  # Executa as tarefas como administrador (sudo)
   become: true
-  # Não coleta informações antes de esperar a VM ligar
   gather_facts: false
-
-  # pre_tasks rodam antes das roles
   pre_tasks:
     - name: Esperar a VM aceitar conexões SSH
       wait_for_connection:
         timeout: 300
-
   roles:
     - os_updates
     - docker
+
+# Play 2: disco de dados e MongoDB, somente na VM banco
+- name: Configurar o banco de dados
+  hosts: banco
+  become: true
+  gather_facts: false
+  roles:
+    - data_disk
+    - mongodb
+
+# Play 3: API e frontend, somente na VM app (depois do banco)
+- name: Configurar a aplicação
+  hosts: app
+  become: true
+  gather_facts: false
+  roles:
+    - app

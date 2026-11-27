@@ -1,0 +1,88 @@
+# Aceita só tags no formato X.Y.Z, explícitas e reproduzíveis
+- name: Conferir o formato da tag das imagens
+  assert:
+    that:
+      - docker_tag is match('^[0-9]+\.[0-9]+\.[0-9]+$')
+    fail_msg: "docker_tag deve ter o formato X.Y.Z (ex.: 1.0.0)."
+
+- name: Conferir se a senha da aplicação foi informada
+  assert:
+    that:
+      - lookup('env', 'MONGO_APP_PASSWORD') | length > 0
+    fail_msg: "O Secret MONGO_APP_PASSWORD é obrigatório."
+  no_log: true
+
+- name: Criar a pasta de configuração da aplicação
+  file:
+    path: /opt/kubeshop/app
+    state: directory
+    mode: "0755"
+
+# Senha legível só pelo usuário da API dentro do contêiner (UID 1000)
+- name: Gravar a senha da aplicação
+  copy:
+    content: "{{ lookup('env', 'MONGO_APP_PASSWORD') }}"
+    dest: /opt/kubeshop/app/mongo_app_password
+    owner: "1000"
+    group: "1000"
+    mode: "0400"
+  no_log: true
+
+# Rede interna do Docker: o Nginx do frontend encontra a API pelo
+# nome "api" dentro dela
+- name: Criar a rede da aplicação
+  community.docker.docker_network:
+    name: kubeshop
+
+# API: acessa o MongoDB pelo IP privado da VM banco (mongo_host).
+# Ao trocar o docker_tag, a imagem nova é baixada e o contêiner é
+# recriado com ela
+- name: Executar o contêiner da API
+  community.docker.docker_container:
+    name: api
+    image: "ghcr.io/{{ image_owner }}/kubeshop-api:{{ docker_tag }}"
+    restart_policy: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    networks:
+      - name: kubeshop
+    env:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "3000"
+      APP_VERSION: "{{ docker_tag }}"
+      MONGO_HOST: "{{ mongo_host }}"
+      MONGO_DATABASE: kubeshop
+      MONGO_AUTH_SOURCE: kubeshop
+      MONGO_USERNAME: kubeshop
+      MONGO_PASSWORD_FILE: /run/secrets/mongo_app_password
+    volumes:
+      - /opt/kubeshop/app/mongo_app_password:/run/secrets/mongo_app_password:ro
+    state: started
+
+# Frontend: Nginx com o React, na porta 80 da VM
+- name: Executar o contêiner do frontend
+  community.docker.docker_container:
+    name: frontend
+    image: "ghcr.io/{{ image_owner }}/kubeshop-frontend:{{ docker_tag }}"
+    restart_policy: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m
+    networks:
+      - name: kubeshop
+    ports:
+      - "80:8080"
+    state: started
+
+# Testa a loja de ponta a ponta: frontend -> API -> MongoDB.
+# Tenta por até 2 minutos, enquanto os contêineres iniciam
+- name: Verificar se a loja está funcionando
+  uri:
+    url: http://localhost/api/health/ready
+    status_code: 200
+  register: health
+  until: health.status == 200
+  retries: 20
+  delay: 6

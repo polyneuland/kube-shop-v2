@@ -1,0 +1,2 @@
+# Versão (tag) das imagens. A pipeline sobrescreve com o docker_tag
+docker_tag: "1.0.0"

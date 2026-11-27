@@ -49,6 +49,13 @@ on:
         type: string
         default: ""
 
+      # Versão (tag) das imagens da aplicação, publicadas pela
+      # pipeline "Build das imagens"
+      docker_tag:
+        description: "Versão das imagens (ex.: 1.0.0)"
+        type: string
+        default: "1.0.0"
+
 jobs:
   terraform:
     # Máquina temporária (runner) emprestada pelo GitHub.
@@ -145,19 +152,22 @@ jobs:
             UserKnownHostsFile /dev/null
           EOF
 
-      # Monta o inventário do Ansible com os IPs dos outputs do
-      # Terraform. Os IPs mudam a cada criação, por isso é gerado aqui
+      # Monta o inventário do Ansible com os valores dos outputs do
+      # Terraform. Os IPs mudam a cada criação, por isso é gerado aqui.
+      # A VM app recebe o IP do banco (mongo_host) e a VM banco
+      # recebe o ID do disco de dados (data_volume_id)
       - name: Gerar o inventário do Ansible
         if: inputs.action == 'apply'
         run: |
           APP_IP=$(terraform output -raw vm_app_public_ip)
           BANCO_IP=$(terraform output -raw vm_banco_private_ip)
+          EBS_ID=$(terraform output -raw ebs_banco_id)
           cat > ../ansible/inventory.ini <<EOF
           [app]
-          vm_app ansible_host=${APP_IP} ansible_user=ubuntu ansible_python_interpreter=/usr/bin/python3
+          vm_app ansible_host=${APP_IP} ansible_user=ubuntu ansible_python_interpreter=/usr/bin/python3 mongo_host=${BANCO_IP}
 
           [banco]
-          vm_banco ansible_host=${BANCO_IP} ansible_user=ubuntu ansible_python_interpreter=/usr/bin/python3 ansible_ssh_common_args='-o ProxyJump=ubuntu@${APP_IP}'
+          vm_banco ansible_host=${BANCO_IP} ansible_user=ubuntu ansible_python_interpreter=/usr/bin/python3 data_volume_id=${EBS_ID} ansible_ssh_common_args='-o ProxyJump=ubuntu@${APP_IP}'
           EOF
           cat ../ansible/inventory.ini
 
@@ -170,7 +180,8 @@ jobs:
 
       # Roda o playbook nas VMs, passando os parâmetros da pipeline.
       # Os valores vão por variáveis de ambiente, e não direto no
-      # comando, para evitar que um texto digitado vire comando
+      # comando, para evitar que um texto digitado vire comando.
+      # As senhas do MongoDB vão só para este passo
       - name: Executar o Ansible
         if: inputs.action == 'apply'
         working-directory: ansible
@@ -178,7 +189,13 @@ jobs:
           ANSIBLE_FORCE_COLOR: "true"
           UPDATE_OS: ${{ inputs.update_os }}
           EXTRA_PACKAGES: ${{ inputs.extra_packages }}
+          DOCKER_TAG: ${{ inputs.docker_tag }}
+          IMAGE_OWNER: ${{ github.repository_owner }}
+          MONGO_ROOT_PASSWORD: ${{ secrets.MONGO_ROOT_PASSWORD }}
+          MONGO_APP_PASSWORD: ${{ secrets.MONGO_APP_PASSWORD }}
         run: >
           ansible-playbook -i inventory.ini playbook.yml
           -e "update_os=$UPDATE_OS"
           -e "extra_packages=$EXTRA_PACKAGES"
+          -e "docker_tag=$DOCKER_TAG"
+          -e "image_owner=$IMAGE_OWNER"

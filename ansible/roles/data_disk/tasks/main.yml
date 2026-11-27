@@ -1,0 +1,42 @@
+# Caminho fixo do disco dentro do Linux, montado a partir do ID
+# do volume (ex.: vol-0abc... vira vol0abc..., sem o hífen)
+- name: Definir o caminho do disco de dados
+  set_fact:
+    data_disk_device: "/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_{{ data_volume_id | replace('-', '') }}"
+
+# O disco é conectado logo depois da VM ser criada: espera ele
+# aparecer no Linux (até 5 minutos)
+- name: Esperar o disco de dados aparecer
+  wait_for:
+    path: "{{ data_disk_device }}"
+    timeout: 300
+
+# Formata SOMENTE se o disco ainda não tiver formatação. Se já
+# tiver (dados existentes), não mexe: os pedidos são preservados
+- name: Formatar o disco de dados (só na primeira vez)
+  community.general.filesystem:
+    fstype: ext4
+    dev: "{{ data_disk_device }}"
+
+# Monta o disco na pasta /data/mongo e registra a montagem, para
+# o disco voltar sozinho se a VM reiniciar
+- name: Montar o disco de dados
+  ansible.posix.mount:
+    path: /data/mongo
+    src: "{{ data_disk_device }}"
+    fstype: ext4
+    opts: defaults,nofail
+    state: mounted
+
+# Pastas onde o MongoDB guarda os dados. O usuário do MongoDB
+# dentro do contêiner tem o número (UID) 999
+- name: Criar as pastas de dados do MongoDB
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: "999"
+    group: "999"
+    mode: "0750"
+  loop:
+    - /data/mongo/db
+    - /data/mongo/configdb

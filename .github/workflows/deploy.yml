@@ -1,7 +1,7 @@
 # Pipeline do Terraform e do Ansible: planeja, cria/atualiza ou
 # destrói a infraestrutura na AWS e configura as VMs, conforme os
 # parâmetros escolhidos
-name: Terraform
+name: Deploy KubeShop
 
 # Trigger: execução manual pela aba Actions ("Run workflow"),
 # com os parâmetros escolhidos na tela

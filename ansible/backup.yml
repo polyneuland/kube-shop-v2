@@ -1,0 +1,53 @@
+# Backup e restauração do MongoDB, executados sob demanda pela
+# pipeline "Backup e restauração". Fica separado do playbook
+# principal para não alterar o ambiente a cada apply
+- name: Backup e restauração do MongoDB
+  hosts: banco
+  become: true
+  gather_facts: false
+
+  vars:
+    operation: backup
+
+  tasks:
+    - name: Conferir a operação pedida
+      assert:
+        that:
+          - operation in ['backup', 'restore']
+        fail_msg: "operation deve ser backup ou restore."
+
+    # --- Backup ---
+    - name: Gerar uma cópia do banco
+      command: /usr/local/bin/kubeshop-backup.sh
+      register: backup_result
+      when: operation == 'backup'
+
+    # Traz a cópia da VM banco para a máquina da pipeline, que
+    # depois envia para o S3
+    - name: Trazer a cópia para a pipeline
+      fetch:
+        src: "{{ backup_result.stdout }}"
+        dest: "{{ playbook_dir }}/backups/"
+        flat: true
+      when: operation == 'backup'
+
+    # --- Restauração ---
+    # Aceita só nomes no formato gerado pelo script de backup
+    - name: Conferir o nome da cópia a restaurar
+      assert:
+        that:
+          - backup_file is match('^kubeshop-[0-9]{8}-[0-9]{6}\.archive\.gz$')
+        fail_msg: "Nome de cópia inválido."
+      when: operation == 'restore'
+
+    # Leva a cópia baixada do S3 para a VM banco
+    - name: Enviar a cópia para a VM banco
+      copy:
+        src: "{{ playbook_dir }}/backups/{{ backup_file }}"
+        dest: "/data/mongo/backups/{{ backup_file }}"
+        mode: "0600"
+      when: operation == 'restore'
+
+    - name: Restaurar o banco a partir da cópia
+      command: "/usr/local/bin/kubeshop-restore.sh /data/mongo/backups/{{ backup_file }}"
+      when: operation == 'restore'

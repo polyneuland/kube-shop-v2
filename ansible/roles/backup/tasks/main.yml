@@ -1,0 +1,52 @@
+# Pasta das cópias, no disco de dados. Acesso só do administrador
+- name: Criar a pasta de backups
+  file:
+    path: /data/mongo/backups
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+# Script de backup: gera uma cópia compactada do banco kubeshop
+# (mongodump) com data e hora no nome e apaga as cópias com mais
+# de 7 dias (retenção). Imprime o caminho da cópia gerada
+- name: Instalar o script de backup
+  copy:
+    dest: /usr/local/bin/kubeshop-backup.sh
+    mode: "0750"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      DIR=/data/mongo/backups
+      FILE="$DIR/kubeshop-$(date +%Y%m%d-%H%M%S).archive.gz"
+      if ! docker exec mongodb sh -c 'mongodump --quiet --username admin --password "$(cat /run/secrets/mongo_root_password)" --authenticationDatabase admin --db kubeshop --archive --gzip' > "$FILE"; then
+        rm -f "$FILE"
+        echo "Falha no backup" >&2
+        exit 1
+      fi
+      find "$DIR" -name 'kubeshop-*.archive.gz' -mtime +7 -delete
+      echo "$FILE"
+
+# Script de restauração: recebe o caminho de uma cópia e restaura
+# o banco kubeshop. O --drop substitui os dados atuais pelos da
+# cópia, deixando o banco exatamente como estava no backup
+- name: Instalar o script de restauração
+  copy:
+    dest: /usr/local/bin/kubeshop-restore.sh
+    mode: "0750"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      FILE="$1"
+      test -s "$FILE"
+      docker exec -i mongodb sh -c 'mongorestore --quiet --username admin --password "$(cat /run/secrets/mongo_root_password)" --authenticationDatabase admin --nsInclude "kubeshop.*" --drop --archive --gzip' < "$FILE"
+      echo "Restaurado a partir de $FILE"
+
+# Backup automático todo dia às 3h, com registro em log
+- name: Agendar o backup diário
+  cron:
+    name: Backup diario do MongoDB do KubeShop
+    minute: "0"
+    hour: "3"
+    user: root
+    job: "/usr/local/bin/kubeshop-backup.sh >> /var/log/kubeshop-backup.log 2>&1"

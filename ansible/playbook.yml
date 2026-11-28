@@ -19,6 +19,7 @@
   roles:
     - data_disk
     - mongodb
+    - backup
 
 # Play 3: API e frontend, somente na VM app (depois do banco)
 - name: Configurar a aplicação

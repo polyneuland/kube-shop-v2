@@ -1,0 +1,138 @@
+# Pipeline de backup e restauração do MongoDB: gera uma cópia do
+# banco e envia para o S3 (backup) ou restaura uma cópia do S3
+# (restore). Não cria nem altera a infraestrutura
+name: Backup e restauração
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Ambiente
+        type: choice
+        options:
+          - dev
+          - homolog
+          - prod
+        default: dev
+
+      operation:
+        description: "Operação: backup (gera e envia ao S3) ou restore (restaura do S3)"
+        type: choice
+        options:
+          - backup
+          - restore
+        default: backup
+
+      # Só usado no restore: "latest" pega a cópia mais recente
+      backup_file:
+        description: "Cópia a restaurar (latest = a mais recente)"
+        type: string
+        default: latest
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: us-east-1
+      # Pasta das cópias no bucket, separada por ambiente
+      BACKUP_PREFIX: s3://${{ vars.TF_STATE_BUCKET }}/backups/kubeshop/${{ inputs.environment }}/
+      OPERATION: ${{ inputs.operation }}
+
+    defaults:
+      run:
+        working-directory: terraform
+
+    steps:
+      - name: Baixar o código do repositório para o runner
+        uses: actions/checkout@v7
+
+      - name: Instalar o Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "~1.13.0"
+          terraform_wrapper: false
+
+      # Conecta ao state só para ler os outputs (IPs das VMs)
+      - name: Inicializar e conectar ao bucket do state
+        run: >
+          terraform init
+          -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
+          -backend-config="key=kubeshop/${{ inputs.environment }}/terraform.tfstate"
+
+      # Para com uma mensagem clara se o ambiente não estiver criado
+      - name: Conferir se o ambiente existe
+        run: |
+          if ! terraform output -raw vm_app_public_ip > /dev/null 2>&1; then
+            echo "O ambiente não está criado. Rode a pipeline principal com apply antes."
+            exit 1
+          fi
+
+      - name: Preparar a chave SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/pm04
+          chmod 600 ~/.ssh/pm04
+          cat > ~/.ssh/config <<'EOF'
+          Host *
+            User ubuntu
+            IdentityFile ~/.ssh/pm04
+            StrictHostKeyChecking no
+            UserKnownHostsFile /dev/null
+          EOF
+
+      - name: Gerar o inventário do Ansible
+        run: |
+          APP_IP=$(terraform output -raw vm_app_public_ip)
+          BANCO_IP=$(terraform output -raw vm_banco_private_ip)
+          cat > ../ansible/inventory.ini <<EOF
+          [app]
+          vm_app ansible_host=${APP_IP} ansible_user=ubuntu ansible_python_interpreter=/usr/bin/python3
+
+          [banco]
+          vm_banco ansible_host=${BANCO_IP} ansible_user=ubuntu ansible_python_interpreter=/usr/bin/python3 ansible_ssh_common_args='-o ProxyJump=ubuntu@${APP_IP}'
+          EOF
+          cat ../ansible/inventory.ini
+
+      # Restore: escolhe a cópia (a mais recente ou a informada),
+      # baixa do S3 e guarda o nome para o próximo passo
+      - name: Baixar a cópia do S3
+        if: inputs.operation == 'restore'
+        env:
+          BACKUP_FILE: ${{ inputs.backup_file }}
+        run: |
+          if [ "$BACKUP_FILE" = "latest" ]; then
+            BACKUP_FILE=$(aws s3 ls "$BACKUP_PREFIX" | awk '{print $4}' | grep -E '^kubeshop-[0-9]{8}-[0-9]{6}\.archive\.gz$' | sort | tail -n 1)
+          fi
+          if [[ ! "$BACKUP_FILE" =~ ^kubeshop-[0-9]{8}-[0-9]{6}\.archive\.gz$ ]]; then
+            echo "Nenhuma cópia válida encontrada ou nome inválido."
+            exit 1
+          fi
+          mkdir -p ../ansible/backups
+          aws s3 cp "${BACKUP_PREFIX}${BACKUP_FILE}" ../ansible/backups/
+          echo "BACKUP_FILE=$BACKUP_FILE" >> "$GITHUB_ENV"
+          echo "Cópia escolhida: $BACKUP_FILE"
+
+      - name: Instalar o Ansible
+        run: pipx install --include-deps ansible
+
+      - name: Executar o backup ou a restauração
+        working-directory: ansible
+        env:
+          ANSIBLE_FORCE_COLOR: "true"
+        run: >
+          ansible-playbook -i inventory.ini backup.yml
+          -e "operation=$OPERATION"
+          -e "backup_file=${BACKUP_FILE:-}"
+
+      # Backup: envia a cópia para o S3, fora da infraestrutura
+      - name: Enviar a cópia para o S3
+        if: inputs.operation == 'backup'
+        run: |
+          aws s3 cp ../ansible/backups/ "$BACKUP_PREFIX" --recursive --exclude "*" --include "kubeshop-*.archive.gz"
+          echo "Cópias disponíveis no S3:"
+          aws s3 ls "$BACKUP_PREFIX"

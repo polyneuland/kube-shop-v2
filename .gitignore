@@ -18,3 +18,6 @@ playwright-report/
 
 # Ansible: inventário gerado pela pipeline (IPs mudam a cada criação)
 ansible/inventory.ini
+
+# Cópias de backup do banco (contêm dados, nunca vão para o GitHub)
+ansible/backups/
